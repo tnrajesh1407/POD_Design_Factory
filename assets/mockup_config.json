@@ -1,0 +1,105 @@
+{
+  "tshirt_mockup.jpg": {
+    "fabric_presets": {
+      "light": {
+        "strength": 0.55,
+        "detail_strength": 0.28,
+        "shading_blur": 24.0,
+        "ink_bleed": 0.08,
+        "desat": 0.05,
+        "gamma": 1.0
+      },
+      "dark": {
+        "strength": 0.40,
+        "detail_strength": 0.22,
+        "shading_blur": 26.0,
+        "ink_bleed": 0.03,
+        "desat": 0.02,
+        "gamma": 0.95
+      }
+    },
+    "shirt_detect": {
+      "enabled": true,
+      "threshold": 110
+    },
+    "modes": {
+      "front": {
+        "preserve_canvas": true,
+        "quad_norm": [
+          [
+            0.34,
+            0.39
+          ],
+          [
+            0.66,
+            0.39
+          ],
+          [
+            0.70,
+            0.67
+          ],
+          [
+            0.30,
+            0.67
+          ]
+        ],
+        "offset_norm": [
+          0.0,
+          0.04
+        ],
+        "fabric": {
+          "strength": 0.58,
+          "detail_strength": 0.30
+        }
+      },
+      "left_chest": {
+        "preserve_canvas": false,
+        "quad_norm": [
+          [
+            0.365,
+            0.255
+          ],
+          [
+            0.525,
+            0.245
+          ],
+          [
+            0.555,
+            0.405
+          ],
+          [
+            0.385,
+            0.420
+          ]
+        ],
+        "fabric": {
+          "strength": 0.48,
+          "detail_strength": 0.18,
+          "ink_bleed": 0.05,
+          "desat": 0.03
+        }
+      }
+    },
+    "shadow": {
+      "blur": 10,
+      "opacity": 55,
+      "offset": [
+        3,
+        4
+      ]
+    },
+    "outline_strip": {
+      "enabled": true,
+      "band_px": 8,
+      "white_min": 235,
+      "sat_max": 45,
+      "feather_px": 2,
+      "min_alpha": 40
+    },
+    "alpha_cleanup": {
+      "alpha_cutoff": 32,
+      "blur": 0.8,
+      "shrink_px": 1
+    }
+  }
+}

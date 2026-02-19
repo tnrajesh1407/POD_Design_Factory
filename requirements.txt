@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+uuid
+openai
+pillow
+opencv
+zipfile36
+rembg
+opencv-python-headless
