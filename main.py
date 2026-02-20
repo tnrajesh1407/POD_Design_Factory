@@ -28,7 +28,7 @@ from pipeline.seo_generator import generate_seo_metadata
 from pipeline.marketplace_files import create_marketplace_files
 from pipeline.pod_validator import validate_or_fix_print_ready
 from pipeline.progress_store import update_design
-from pipeline.thumbnail_generator import generate_fiverr_domination_thumbnail
+#from pipeline.thumbnail_generator import generate_fiverr_domination_thumbnail
 
 
 # ----------------------------
@@ -62,7 +62,8 @@ class DesignRequest(BaseModel):
 
     # mockups
     make_mockups: bool = True
-    mockups: List[str] = ["tshirt_white.jpg"]
+    mockups: List[str] = ["tshirt_black.png", "tshirt_blue.png", "tshirt_white.png"]
+    #mockups: List[str] = ["tshirt_white.png"]
     write_debug: bool = False
 
 
@@ -97,11 +98,11 @@ def _collect_preview_images(job_id: str) -> List[str]:
                 images.append(f"/outputs/{job_id}/design_{i}/{fname}")
 
         # Fiverr thumbnails A/B/C
-        for v in ("A", "B", "C"):
-            tname = f"06_fiverr_thumb_{v}.png"
-            tpath = os.path.join(design_dir, tname)
-            if os.path.exists(tpath):
-                images.append(f"/outputs/{job_id}/design_{i}/{tname}")
+        #for v in ("A", "B", "C"):
+            #tname = f"06_fiverr_thumb_{v}.png"
+            #tpath = os.path.join(design_dir, tname)
+            #if os.path.exists(tpath):
+                #images.append(f"/outputs/{job_id}/design_{i}/{tname}")
 
     return images
 
@@ -212,7 +213,7 @@ def _process_one_design(
         if make_mockups and mockups:
             progress_cb(i, "mockup", f"Variation {i}: generating mockups", 1)
             for fname in mockups:
-                out_name = "05_mockup_" + os.path.splitext(fname)[0].replace("tshirt_", "") + ".jpg"
+                out_name = "05_mockup_" + os.path.splitext(fname)[0].replace("tshirt_", "") + ".png"
                 out_path = os.path.join(design_dir, out_name)
 
                 create_mockup(
@@ -224,7 +225,7 @@ def _process_one_design(
                 )
                 mockup_paths.append(out_path)
 
-                if fname == "tshirt_white.jpg":
+                if fname == "tshirt_white.png":
                     mockup_white_path = out_path
         else:
             progress_cb(i, "mockup_skip", f"Variation {i}: mockups skipped", 1)
@@ -258,14 +259,14 @@ def _process_one_design(
             message="Completed",
         )
 
-        return {
-            "design_index": i,
-            "design_dir": design_dir,
-            "print_ready": print_ready,
-            "mockups": mockup_paths,
-            "thumbnails": thumbs,  # {"A": "...", "B": "...", "C": "..."}
-            "status": "ok",
-        }
+        #return {
+           # "design_index": i,
+            #"design_dir": design_dir,
+            #"print_ready": print_ready,
+            #"mockups": mockup_paths,
+            #"thumbnails": thumbs,  # {"A": "...", "B": "...", "C": "..."}
+            #"status": "ok",
+        #}
 
     except Exception as e:
         update_design(
@@ -298,7 +299,7 @@ def _run_pipeline(
 
     # Each design produces exactly 9 progress increments in the worker
     # (including mockup_skip if mockups disabled).
-    steps_per_design = 11
+    steps_per_design = 10
     total_steps = num_designs * steps_per_design + 1  # + zip
     done_steps = 0
 
