@@ -481,18 +481,21 @@ def create_mockup(
     """
     if mockup_path is None:
         # legacy default if user doesn't pass a path
-        mockup_path = os.path.join(BASE_DIR, "assets", "tshirt_mockup.jpg")
+        mockup_path = os.path.join(BASE_DIR, "assets", "tshirt_mockup.png")
     else:
         # allow passing relative path like "assets/tshirt_white.jpg"
-        if not os.path.isabs(mockup_path):
-            mockup_path = os.path.join(BASE_DIR, mockup_path)
+        if os.path.isabs(mockup_path) and not os.path.exists(mockup_path):
+            candidate = os.path.join(BASE_DIR, "assets", os.path.basename(mockup_path))
+            if os.path.exists(candidate):
+                mockup_path = candidate
+
 
     mockup_filename = os.path.basename(mockup_path)
 
     cfg = _load_cfg(mockup_filename)
     # fallback to legacy entry if a new filename doesn't exist yet
-    if not cfg and mockup_filename != "tshirt_mockup.jpg":
-        cfg = _load_cfg("tshirt_mockup.jpg")
+    if not cfg and mockup_filename != "tshirt_mockup.png":
+        cfg = _load_cfg("tshirt_mockup.png")
 
     if not cfg:
         raise RuntimeError(
@@ -703,7 +706,7 @@ if __name__ == "__main__":
     in_path = sys.argv[1]
     out_path = sys.argv[2]
     mode_arg = sys.argv[3] if len(sys.argv) > 3 else None
-    mockup_file = sys.argv[4] if len(sys.argv) > 4 else "tshirt_mockup.jpg"
+    mockup_file = sys.argv[4] if len(sys.argv) > 4 else "tshirt_mockup.png"
 
     create_mockup(
         in_path,
