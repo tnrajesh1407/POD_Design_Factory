@@ -184,7 +184,7 @@ def _process_one_design(
             print_ready,
             alpha_threshold=20,
             band_px=6,
-            max_edge_junk=25000,
+            max_edge_junk=40000,
             auto_fix_passes=1,
         )
 
