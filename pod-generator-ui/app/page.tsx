@@ -17,6 +17,19 @@ type StatusResponse = {
 
 const API_BASE = "http://127.0.0.1:8000";
 
+type ImageItem = string | { url: string; label?: string };
+
+const isImageObj = (x: any): x is { url: string; label?: string } =>
+  x && typeof x === "object" && typeof x.url === "string";
+
+const normalizeImages = (arr: any): string[] => {
+  if (!Array.isArray(arr)) return [];
+  // Convert both formats into a clean string[]
+  return arr
+    .map((x) => (typeof x === "string" ? x : isImageObj(x) ? x.url : null))
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+};
+
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [count, setCount] = useState(3);
@@ -39,10 +52,39 @@ export default function Home() {
     [prompt, loading]
   );
 
-  const absolutize = (pathOrUrl: string) => {
+  const absolutize = (pathOrUrl: unknown) => {
+    if (typeof pathOrUrl !== "string") return "";
     if (!pathOrUrl) return pathOrUrl;
     if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) return pathOrUrl;
     return `${API_BASE}${pathOrUrl}`;
+  };
+
+  const labelFor = (pathOrUrl: string) => {
+    if (!pathOrUrl) return "Image";
+
+    const clean = pathOrUrl.split("?")[0];
+    const base = clean.split("/").pop()?.toLowerCase() ?? "";
+
+    // Print files
+    if (base === "print_dark.png" || base === "for_dark_shirts.png") return "Print - Dark Shirts";
+    if (base === "print_light.png" || base === "for_light_shirts.png") return "Print - Light Shirts";
+
+    // Mockups
+    if (base === "mockup_black.png") return "Mockup - Black Shirt";
+    if (base === "mockup_blue.png") return "Mockup - Blue Shirt";
+    if (base === "mockup_white.png") return "Mockup - White Shirt";
+
+    // Legacy / internal (if ever shown)
+    if (base.startsWith("preview_print_")) return "Preview Print (Internal)";
+    if (base.includes("01_original")) return "Original";
+    if (base.includes("02_upscaled")) return "Upscaled";
+    if (base.includes("03_transparent")) return "Transparent Cutout";
+
+    // Fallback
+    if (base.startsWith("mockup_")) return "Mockup";
+    if (base.startsWith("print_")) return "Print File";
+
+    return base || "Image";
   };
 
   async function fetchJob(job_id: string) {
@@ -53,7 +95,7 @@ export default function Home() {
     }
     const data = await res.json();
 
-    setImages(Array.isArray(data.images) ? data.images : []);
+    setImages(normalizeImages(data.images));
     setZipUrl(data.zip ? data.zip : null);
   }
 
@@ -286,12 +328,12 @@ export default function Home() {
                 >
                   <img
                     src={absolutize(img)}
-                    alt={`Design ${idx + 1}`}
+                    alt={labelFor(img)}
                     style={{ width: "100%", height: 220, objectFit: "cover", display: "block" }}
                     loading="lazy"
                   />
                   <div style={{ padding: 10, fontSize: 12, opacity: 0.85 }}>
-                    {img.includes("/01_original.") ? "Original" : "Mockup"}
+                    {labelFor(img)}
                   </div>
                 </a>
               ))}
