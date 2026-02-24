@@ -47,8 +47,9 @@ def update_design(
     step: str = None,
     message: str = None,
     progress: int = None,
-    status: str = None,      # running | done | error
+    status: str = None,
     error: str = None,
+    **extra,                 # ✅ allow adding fields like quality
 ):
     with _lock:
         if job_id not in _progress:
@@ -81,6 +82,10 @@ def update_design(
             design["status"] = status
         if error is not None:
             design["error"] = error
+
+        # ✅ Merge extra fields (quality, mockups, etc.)
+        if extra:
+            design.update(extra)
 
         # Update aggregate counters
         completed = sum(1 for d in job["designs"].values() if d["status"] == "done")

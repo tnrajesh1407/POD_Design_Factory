@@ -1,0 +1,63 @@
+import os
+import shutil
+
+
+def _safe_copytree(src: str, dst: str):
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+
+def build_final_delivery(job_dir: str, *, include_original: bool = True):
+    """
+    Copies each design's deliverables into:
+      <job_dir>/final_delivery/design_<i>/
+
+    Optionally includes 01_original.png for each design.
+    """
+    final_root = os.path.join(job_dir, "final_delivery")
+    os.makedirs(final_root, exist_ok=True)
+
+    # Clean previous final_delivery (avoid stale files)
+    for name in os.listdir(final_root):
+        p = os.path.join(final_root, name)
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+        else:
+            os.remove(p)
+
+    # Copy per-design deliverables
+    for i in range(1, 500):
+        design_dir = os.path.join(job_dir, f"design_{i}")
+        if not os.path.isdir(design_dir):
+            break
+
+        src_deliver = os.path.join(design_dir, "deliverables")
+        if not os.path.isdir(src_deliver):
+            continue
+
+        dst_design = os.path.join(final_root, f"design_{i}")
+        os.makedirs(dst_design, exist_ok=True)
+
+        _safe_copytree(src_deliver, os.path.join(dst_design, "deliverables"))
+
+        if include_original:
+            orig = os.path.join(design_dir, "01_original.png")
+            if os.path.exists(orig):
+                shutil.copyfile(orig, os.path.join(dst_design, "01_original.png"))
+
+    # Write a top-level readme
+    readme = [
+        "FINAL DELIVERY (BUYER-READY PACKAGE)",
+        "",
+        "Each design folder contains:",
+        "- deliverables/print_files/ (UPLOAD print_*.png to POD platform)",
+        "- deliverables/mockups/ (preview images)",
+        "- deliverables/marketplace_text/ (Etsy/Redbubble/Amazon text + README)",
+        "",
+        "NOTE:",
+        "- preview_print_*.png are only for viewing (do NOT upload to POD).",
+        "",
+    ]
+    with open(os.path.join(final_root, "README_FINAL_DELIVERY.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(readme))

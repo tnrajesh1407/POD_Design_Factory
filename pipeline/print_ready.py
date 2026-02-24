@@ -1,4 +1,4 @@
-from PIL import Image, ImageFilter, ImageCms, ImageDraw
+from PIL import Image, ImageFilter, ImageCms, ImageDraw, ImageEnhance, ImageChops
 import numpy as np
 import io
 
@@ -127,6 +127,48 @@ def _create_bleed_debug_overlay(
     return Image.alpha_composite(debug, overlay)
 
 
+# ----------------------------
+# NEW: Light-garment helpers
+# ----------------------------
+def _boost_color_for_light_garment(img: Image.Image, sat: float = 1.12, contrast: float = 1.08) -> Image.Image:
+    """
+    Small, safe boosts that help pastels pop on white garments.
+    Operates only on RGB while preserving alpha.
+    """
+    img = img.convert("RGBA")
+    a = img.split()[-1]
+    rgb = img.convert("RGB")
+    rgb = ImageEnhance.Color(rgb).enhance(float(sat))
+    rgb = ImageEnhance.Contrast(rgb).enhance(float(contrast))
+    out = Image.merge("RGBA", (*rgb.split(), a))
+    return out
+
+
+def _apply_outer_keyline(img: Image.Image, outline_px: int = 12, outline_rgba=(42, 42, 42, 255)) -> Image.Image:
+    """
+    Create an outer stroke around non-transparent pixels (alpha-based).
+    This is the main fix for 'blending into white shirts'.
+    """
+    if outline_px <= 0:
+        return img.convert("RGBA")
+
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+
+    # MaxFilter size must be odd; k ~ stroke diameter
+    k = max(3, int(outline_px) * 2 + 1)
+    a_expanded = a.filter(ImageFilter.MaxFilter(k))
+
+    # stroke alpha = expanded - original (outer ring only)
+    stroke_alpha = ImageChops.subtract(a_expanded, a)
+
+    stroke = Image.new("RGBA", img.size, outline_rgba)
+    stroke.putalpha(stroke_alpha)
+
+    # stroke behind original
+    return Image.alpha_composite(stroke, img)
+
+
 def place_on_pod_canvas(
     input_path: str,
     output_path: str,
@@ -138,20 +180,25 @@ def place_on_pod_canvas(
     max_h_norm: float = 0.60,
     min_w_norm: float = 0.25,
     alpha_center_thresh: int = 20,
-    safe_margin_px: int = 250,     # ✅ reject if bbox enters this margin
-    reject_on_margin: bool = True, # ✅ turn off if you want warning-only behavior
-    debug_overlay: bool = False,   # ✅ writes *_debug.png
+    safe_margin_px: int = 250,      # ✅ reject if bbox enters this margin
+    reject_on_margin: bool = True,  # ✅ turn off if you want warning-only behavior
+    debug_overlay: bool = False,    # ✅ writes *_debug.png
+
+    # ----------------------------
+    # NEW: Profile controls
+    # ----------------------------
+    profile: str = "dark",          # "dark" or "light"
+    light_sat: float = 1.12,
+    light_contrast: float = 1.08,
+    light_outline_px: int = 12,
+    light_outline_rgba=(42, 42, 42, 255),
 ):
     """
     Production-safe POD print-ready generator.
 
-    Features:
-    - alpha ramp tightening (pre + post resize)
-    - bbox-based centering
-    - safe resize (RGB & alpha resized separately)
-    - sRGB ICC embed + 300 DPI
-    - optional debug overlay
-    - optional hard reject if bbox intersects safe margins
+    NEW:
+    - profile="light" produces a white-shirt friendly variant
+      (outer keyline + small color boosts)
     """
 
     max_w = int(canvas_w * max_w_norm)
@@ -186,6 +233,13 @@ def place_on_pod_canvas(
     # Tighten alpha AFTER resize (reduces edge-band semi-transparent ramps)
     design = _tighten_alpha_edges(design, low=22, high=210, blur=0.4, snap_opaque=240)
 
+    # ----------------------------
+    # NEW: Apply light-garment profile at final scale
+    # ----------------------------
+    if (profile or "").lower() == "light":
+        design = _boost_color_for_light_garment(design, sat=light_sat, contrast=light_contrast)
+        design = _apply_outer_keyline(design, outline_px=int(light_outline_px), outline_rgba=light_outline_rgba)
+
     # Compute bbox for centering (ignores faint junk)
     bbox = _alpha_bbox(design, threshold=alpha_center_thresh)
 
@@ -214,7 +268,6 @@ def place_on_pod_canvas(
     if reject_on_margin and _bbox_intersects_safe_margin(
         final_bbox, canvas_w=canvas_w, canvas_h=canvas_h, margin_px=safe_margin_px
     ):
-        # still write debug overlay if requested (helps you tune y_norm/scale)
         if debug_overlay:
             dbg = _create_bleed_debug_overlay(canvas, design_bbox=final_bbox, margin_px=safe_margin_px)
             debug_path = output_path.replace(".png", "_debug.png")
@@ -236,4 +289,17 @@ def place_on_pod_canvas(
         dbg.save(debug_path, "PNG", dpi=(300, 300), icc_profile=_SRGB_ICC_BYTES)
         print("🟢 Debug safety guide created:", debug_path)
 
-    print("✅ Print-ready file created (production-safe):", output_path)
+    print(f"✅ Print-ready file created ({profile}):", output_path)
+
+
+# ----------------------------
+# NEW: Export both variants
+# ----------------------------
+def export_pod_variants(
+    input_path: str,
+    out_dark_path: str,
+    out_light_path: str,
+    **kwargs,
+):
+    place_on_pod_canvas(input_path, out_dark_path, profile="dark", **kwargs)
+    place_on_pod_canvas(input_path, out_light_path, profile="light", **kwargs)

@@ -7,6 +7,9 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
+from pipeline.adaptive_tuning import analyze_design_rgba, analyze_shirt_bg, compute_adaptive_params
+
+
 # Expected project layout:
 #   <project>/pipeline/mockup.py   (this file)
 #   <project>/assets/tshirt_mockup.jpg (optional legacy default)
@@ -387,6 +390,37 @@ def _debug_paths(output_path: str) -> Tuple[str, str, str]:
     return root + "_area_debug" + ext, root + "_quad_outline" + ext, root + "_warp_debug" + ext
 
 
+def _aspect_vertical_bias_px(
+    bbox, canvas_w, canvas_h, mockup_h,
+    enabled=True,
+    tall_aspect=0.90,
+    wide_aspect=1.25,
+    tall_shift_norm=0.020,   # 2.0% of mockup height
+    wide_shift_norm=-0.017,  # -1.7% of mockup height
+    square_shift_norm=-0.007,# -0.7% of mockup height
+    min_bbox_h_norm=0.22,    # ignore tiny designs/logos
+):
+    if not enabled or not bbox:
+        return 0
+
+    x1, y1, x2, y2 = bbox
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+
+    # Ignore small designs (often left chest / logos)
+    if (bh / max(1, canvas_h)) < float(min_bbox_h_norm):
+        return 0
+
+    aspect = bw / bh
+
+    if aspect < float(tall_aspect):
+        return int(round(float(tall_shift_norm) * mockup_h))   # down
+    elif aspect > float(wide_aspect):
+        return int(round(float(wide_shift_norm) * mockup_h))   # up
+    else:
+        return int(round(float(square_shift_norm) * mockup_h)) # slight up
+
+
 # -------------------------------
 # Fabric blend (wrinkle/shading integration)
 # -------------------------------
@@ -456,6 +490,57 @@ def _fabric_blend(
     return (out * 255.0).astype(np.uint8)
 
 
+def _design_features(pr: Image.Image, bbox, alpha_thr: int = 32):
+    x1, y1, x2, y2 = bbox
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+
+    arr = np.array(pr.convert("RGBA"), dtype=np.uint8)
+    a = arr[:, :, 3]
+    a_crop = a[y1:y2, x1:x2]
+
+    ink = (a_crop > int(alpha_thr)).astype(np.uint8)
+    ink_pixels = int(ink.sum())
+    bbox_pixels = int(ink.size)
+    ink_density = ink_pixels / max(1, bbox_pixels)
+
+    # Vertical centroid of ink (0=top, 1=bottom)
+    rows = ink.sum(axis=1).astype(np.float32)
+    if rows.sum() > 0:
+        ys = np.arange(len(rows), dtype=np.float32)
+        cy = float((ys * rows).sum() / rows.sum()) / max(1.0, (len(rows) - 1))
+    else:
+        cy = 0.5
+
+    aspect = bw / bh
+    area_norm = (bw * bh) / float(pr.width * pr.height)
+
+    return {
+        "bw": bw, "bh": bh,
+        "aspect": float(aspect),
+        "area_norm": float(area_norm),
+        "ink_density": float(ink_density),
+        "v_centroid": float(cy),
+    }
+
+
+def _classify_badge_mascot_wide(feat: Dict[str, float]) -> str:
+    aspect = feat["aspect"]
+    area = feat["area_norm"]
+    dens = feat["ink_density"]
+
+    # Wide slogans / arched text
+    if aspect >= 1.25:
+        return "wide"
+
+    # Badge/emblem/poster (square-ish + dense + big)
+    if (0.85 < aspect < 1.25) and (area >= 0.20) and (dens >= 0.28):
+        return "badge"
+
+    # Default: mascot/character
+    return "mascot"
+
+
 # -------------------------------
 # Public API
 # -------------------------------
@@ -465,7 +550,7 @@ def create_mockup(
     output_path: str,
     mode: Optional[str] = None,
     mockup_path: Optional[str] = None,
-    write_debug: bool = True,
+    write_debug: bool = False,
 ):
     """
     Create a warped t-shirt mockup.
@@ -489,7 +574,6 @@ def create_mockup(
             if os.path.exists(candidate):
                 mockup_path = candidate
 
-
     mockup_filename = os.path.basename(mockup_path)
 
     cfg = _load_cfg(mockup_filename)
@@ -512,27 +596,43 @@ def create_mockup(
     # Load print-ready input
     pr = Image.open(print_ready_path).convert("RGBA")
 
-    # --- outline strip (config-driven) ---
+    # -------------------------------
+    # Adaptive mathematical tuning (design + shirt background)
+    # -------------------------------
+    pr_arr = np.array(pr, dtype=np.uint8)  # HxWx4 RGBA
+    design_stats = analyze_design_rgba(pr_arr)
+    bg_stats = analyze_shirt_bg(mockup_bgr, shirt_mask_u8=None)
+    adaptive = compute_adaptive_params(design_stats, bg_stats)
+
+    if write_debug:
+        print("[adaptive] signals:", adaptive.get("signals"))
+        print("[adaptive] outline_strip:", adaptive.get("outline_strip"))
+        print("[adaptive] alpha_cleanup:", adaptive.get("alpha_cleanup"))
+        print("[adaptive] fabric_presets:", adaptive.get("fabric_presets"))
+
+    # --- outline strip (config overrides adaptive) ---
     outline_cfg = cfg.get("outline_strip", {}) if isinstance(cfg.get("outline_strip"), dict) else {}
+    ad_os = adaptive.get("outline_strip", {}) or {}
     pr = _strip_soft_edge_glow(
         pr,
         enabled=bool(outline_cfg.get("enabled", True)),
-        band_px=int(outline_cfg.get("band_px", 10)),
-        feather_px=int(outline_cfg.get("feather_px", 3)),
-        min_alpha=int(outline_cfg.get("min_alpha", 40)),
+        band_px=int(outline_cfg.get("band_px", ad_os.get("band_px", 10))),
+        feather_px=int(outline_cfg.get("feather_px", ad_os.get("feather_px", 3))),
+        min_alpha=int(outline_cfg.get("min_alpha", ad_os.get("min_alpha", 40))),
         white_min=int(outline_cfg.get("white_min", 235)),
         sat_max=int(outline_cfg.get("sat_max", 45)),
         dark_max=int(outline_cfg.get("dark_max", 40)),
         mode=str(outline_cfg.get("mode", "white")).lower(),
     )
 
-    # --- alpha cleanup (config-driven) ---
+    # --- alpha cleanup (config overrides adaptive) ---
     ac = cfg.get("alpha_cleanup", {}) if isinstance(cfg.get("alpha_cleanup"), dict) else {}
+    ad_ac = adaptive.get("alpha_cleanup", {}) or {}
     pr = _clean_alpha_strong(
         pr,
-        alpha_cutoff=int(ac.get("alpha_cutoff", 32)),
-        blur=float(ac.get("blur", 0.8)),
-        shrink_px=int(ac.get("shrink_px", 1)),
+        alpha_cutoff=int(ac.get("alpha_cutoff", ad_ac.get("alpha_cutoff", 32))),
+        blur=float(ac.get("blur", ad_ac.get("blur", 0.8))),
+        shrink_px=int(ac.get("shrink_px", ad_ac.get("shrink_px", 1))),
     )
 
     # bbox only (used to infer mode)
@@ -541,7 +641,22 @@ def create_mockup(
     modes = cfg.get("modes", {}) if isinstance(cfg.get("modes", {}), dict) else {}
 
     if mode is None:
-        mode = "left_chest" if _is_logo_like_from_bbox(bbox, pr.width, pr.height) else "front"
+        if _is_logo_like_from_bbox(bbox, pr.width, pr.height):
+            mode = "left_chest"
+            kind = "logo"
+        else:
+            feat = _design_features(pr, bbox, alpha_thr=32)
+            kind = _classify_badge_mascot_wide(feat)
+
+            if kind == "wide" and "front_wide" in modes:
+                mode = "front_wide"
+            elif kind == "badge" and "front_badge" in modes:
+                mode = "front_badge"
+            else:
+                mode = "front_mascot" if "front_mascot" in modes else next(iter(modes.keys()))
+
+        if write_debug:
+            print(f"[mockup] kind={kind} -> mode={mode}")
 
     if mode not in modes:
         raise ValueError(f"Unknown mode '{mode}'. Available: {sorted(modes.keys())}")
@@ -589,6 +704,29 @@ def create_mockup(
             diff_thresh=diff_thresh,
         )
 
+    # --- aspect-based vertical bias (tall vs wide) ---
+    ab = cfg.get("aspect_bias", {}) if isinstance(cfg.get("aspect_bias"), dict) else {}
+    if isinstance(mode_cfg, dict) and isinstance(mode_cfg.get("aspect_bias"), dict):
+        ab = {**ab, **mode_cfg.get("aspect_bias")}
+
+    dy_bias = _aspect_vertical_bias_px(
+        bbox=bbox,
+        canvas_w=pr.width,
+        canvas_h=pr.height,
+        mockup_h=H,
+        enabled=bool(ab.get("enabled", True)),
+        tall_aspect=float(ab.get("tall_aspect", 0.90)),
+        wide_aspect=float(ab.get("wide_aspect", 1.25)),
+        tall_shift_norm=float(ab.get("tall_shift_norm", 0.020)),
+        wide_shift_norm=float(ab.get("wide_shift_norm", -0.017)),
+        square_shift_norm=float(ab.get("square_shift_norm", -0.007)),
+        min_bbox_h_norm=float(ab.get("min_bbox_h_norm", 0.22)),
+    )
+
+    if mode in ("front_mascot",):
+        if dy_bias:
+            quad = _apply_quad_offset(quad, W, H, dx_px=0, dy_px=dy_bias)
+
     if not _quad_ok(quad, W, H):
         raise RuntimeError(f"Invalid quad for mockup '{mockup_filename}' mode '{mode}'. Check mockup_config.json.")
 
@@ -598,6 +736,16 @@ def create_mockup(
         design = pr.copy()
     else:
         design, _ = _crop_to_alpha(pr, pad_pct=0.02)
+
+    # Optional: adaptive scale-down for very bold designs (reduces "too big" perception)
+    if not preserve_canvas:
+        sig = adaptive.get("signals", {}) or {}
+        boldness = float(sig.get("boldness", 0.0))
+        if boldness > 0.35:
+            s = 1.0 - 0.08 * min(1.0, (boldness - 0.35) / 0.65)  # up to ~8% downscale
+            nw = max(1, int(round(design.width * s)))
+            nh = max(1, int(round(design.height * s)))
+            design = design.resize((nw, nh), Image.LANCZOS)
 
     # Optional: add shadow (config-driven)
     shadow_cfg = cfg.get("shadow", {}) if isinstance(cfg.get("shadow"), dict) else {}
@@ -617,9 +765,8 @@ def create_mockup(
 
     # -------------------------------
     # Fabric blend settings:
-    # - prefer cfg.fabric_presets (light/dark) chosen from mockup luminance
-    # - fallback to cfg.fabric
-    # - mode_cfg.fabric overrides always win
+    # Priority (highest wins):
+    #   mode_cfg.fabric > cfg presets/fabric > adaptive defaults
     # -------------------------------
     fabric_cfg: Dict[str, Any] = {}
 
@@ -636,6 +783,13 @@ def create_mockup(
     if not fabric_cfg and isinstance(cfg.get("fabric"), dict):
         fabric_cfg.update(cfg.get("fabric"))
 
+    # Adaptive fabric defaults (only fill missing keys so cfg remains authoritative)
+    ad_fabric = adaptive.get("fabric_presets", {}) or {}
+    if isinstance(ad_fabric, dict):
+        for k, v in ad_fabric.items():
+            fabric_cfg.setdefault(k, v)
+
+    # Mode overrides always win
     if isinstance(mode_cfg, dict) and isinstance(mode_cfg.get("fabric"), dict):
         fabric_cfg.update(mode_cfg.get("fabric"))
 
@@ -700,7 +854,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 3:
-        print("Usage: python finalmockup.py <print_ready.png> <output_mockup.jpg> [mode] [mockup_filename]")
+        print("Usage: python finalmockup.py <print_ready.png> <output_mockup.jpg> [mode=auto|front_mascot|front_badge|front_wide|left_chest] [mockup_filename]")
         raise SystemExit(1)
 
     in_path = sys.argv[1]
